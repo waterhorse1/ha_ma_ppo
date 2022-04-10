@@ -311,5 +311,7 @@ def get_config():
                         default=5, help="the number of episodes to render a given env")
     parser.add_argument("--ifi", type=float, 
                         default=0.1, help="the play interval of each rendered image in saved video.")
-
+    
+    parser.add_argument("--same_critic", action='store_true', 
+                        default=False)
     return parser

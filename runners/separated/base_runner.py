@@ -92,6 +92,8 @@ class Runner(object):
                         share_observation_space,
                         self.envs.action_space[agent_id],
                         device = self.device)
+            if self.all_args.same_critic and agent_id > 0:
+                po.copy_critic(self.policy[0].critic)
             self.policy.append(po)
 
         if self.model_dir is not None:
@@ -136,10 +138,9 @@ class Runner(object):
     def train(self):
         train_infos = []
         # random update order
-
         action_dim=self.buffer[0].actions.shape[-1]
-        factor = np.ones((self.episode_length, self.n_rollout_threads, action_dim), dtype=np.float32)
-
+        factor = np.ones((self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
+        
         for agent_id in torch.randperm(self.num_agents):
             self.trainer[agent_id].prep_training()
             
@@ -184,17 +185,16 @@ class Runner(object):
                                                                 self.buffer[agent_id].active_masks[:-1].reshape(-1, *self.buffer[agent_id].active_masks.shape[2:]))
 
                 else:
-                    raise NotImplementedError
-            
+                    raise NotImplementedError   
+                log_action_ratio = (new_actions_logprob-old_actions_logprob).sum(dim=-1, keepdim=True)
+                factor = factor * _t2n(torch.exp(log_action_ratio).reshape(self.episode_length,self.n_rollout_threads,1))
 
-                factor = factor*_t2n(torch.exp(new_actions_logprob-old_actions_logprob).reshape(self.episode_length,self.n_rollout_threads,action_dim))
             elif self.all_args.algorithm_name == "maa2c" or self.all_args.algorithm_name == "mappo":
                 train_info = self.trainer[agent_id].train(self.buffer[agent_id])
             else:
                 raise NotImplementedError
             train_infos.append(train_info)      
             self.buffer[agent_id].after_update()
-        
         return train_infos
 
     def save(self):

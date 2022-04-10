@@ -126,19 +126,18 @@ class HAA2C():
                                                                               masks_batch, 
                                                                               available_actions_batch,
                                                                               active_masks_batch)
-
+        
         # actor update
-        imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch)
+        imp_weights = torch.exp((action_log_probs - old_action_log_probs_batch).sum(dim=-1, keepdim=True))
         
         surr1 = imp_weights * adv_targ
 
         if self._use_policy_active_masks:
-            policy_action_loss = (-torch.sum(factor_batch * surr1,
+            policy_action_loss = (-torch.sum(surr1,
                                              dim=-1,
                                              keepdim=True) * active_masks_batch).sum() / active_masks_batch.sum()
         else:
-            policy_action_loss = -torch.sum(factor_batch * torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
-
+            policy_action_loss = -torch.sum(surr1, dim=-1, keepdim=True).mean()
         policy_loss = policy_action_loss
 
         self.policy.actor_optimizer.zero_grad()
@@ -180,12 +179,19 @@ class HAA2C():
             advantages = buffer.returns[:-1] - self.value_normalizer.denormalize(buffer.value_preds[:-1])
         else:
             advantages = buffer.returns[:-1] - buffer.value_preds[:-1]
+        
+        print(advantages.shape, buffer.factor.shape, advantages[:10,:,0], buffer.factor[:10,0,0])
+        if buffer.factor is None:
+            pass
+        else:
+            advantages = advantages * buffer.factor
 
         advantages_copy = advantages.copy()
         advantages_copy[buffer.active_masks[:-1] == 0.0] = np.nan
         mean_advantages = np.nanmean(advantages_copy)
         std_advantages = np.nanstd(advantages_copy)
         advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
+        
 
         train_info = {}
 

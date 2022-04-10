@@ -1,7 +1,7 @@
 import torch
 from algorithms.actor_critic import Actor, Critic
 from utils.util import update_linear_schedule
-
+import copy
 
 class HAPPO_Policy:
     """
@@ -42,7 +42,13 @@ class HAPPO_Policy:
                                                  lr=self.critic_lr,
                                                  eps=self.opti_eps,
                                                  weight_decay=self.weight_decay)
-
+        
+    def copy_critic(self, critic):
+        self.critic = critic
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(),
+                                                 lr=self.critic_lr,
+                                                 eps=self.opti_eps,
+                                                 weight_decay=self.weight_decay)
     def lr_decay(self, episode, episodes):
         """
         Decay the actor and critic learning rates.

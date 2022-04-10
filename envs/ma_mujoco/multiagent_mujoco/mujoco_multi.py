@@ -42,6 +42,8 @@ class MujocoMulti(MultiAgentEnv):
         super().__init__(batch_size, **kwargs)
         self.scenario = kwargs["env_args"]["scenario"]  # e.g. Ant-v2
         self.agent_conf = kwargs["env_args"]["agent_conf"]  # e.g. '2x3'
+        
+        self.use_global_id = kwargs["env_args"]["use_global_id"]
 
         self.agent_partitions, self.mujoco_edges, self.mujoco_globals = get_parts_and_edges(self.scenario,
                                                                                             self.agent_conf)
@@ -117,7 +119,7 @@ class MujocoMulti(MultiAgentEnv):
 
         pass
 
-    def step(self, actions):
+    def step(self, actions, global_id=True):
 
         # need to remove dummy actions that arise due to unequal action vector sizes across agents
         flat_actions = np.concatenate([actions[i][:self.action_space[i].low.shape[0]] for i in range(self.n_agents)])
@@ -188,10 +190,13 @@ class MujocoMulti(MultiAgentEnv):
         state = self.env._get_obs()
         share_obs = []
         for a in range(self.n_agents):
-            agent_id_feats = np.zeros(self.n_agents, dtype=np.float32)
-            agent_id_feats[a] = 1.0
-            # share_obs.append(np.concatenate([state, self.get_obs_agent(a), agent_id_feats]))
-            state_i = np.concatenate([state, agent_id_feats])
+            if self.use_global_id:
+                agent_id_feats = np.zeros(self.n_agents, dtype=np.float32)
+                agent_id_feats[a] = 1.0
+                # share_obs.append(np.concatenate([state, self.get_obs_agent(a), agent_id_feats]))
+                state_i = np.concatenate([stzsate, agent_id_feats])
+            else:
+                state_i = state
             state_i = (state_i - np.mean(state_i)) / np.std(state_i)
             share_obs.append(state_i)
         return share_obs

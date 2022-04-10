@@ -120,17 +120,18 @@ class MAA2C():
                                                                               available_actions_batch,
                                                                               active_masks_batch)
         # actor update
-        imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch.detach())
+        #imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch.detach())
+
+        imp_weights = torch.exp((action_log_probs - old_action_log_probs_batch).sum(dim=-1, keepdim=True))
 
         surr1 = imp_weights * adv_targ
-
+        
         if self._use_policy_active_masks:
             policy_action_loss = (-torch.sum(surr1,
                                              dim=-1,
                                              keepdim=True) * active_masks_batch).sum() / active_masks_batch.sum()
         else:
             policy_action_loss = -torch.sum(surr1, dim=-1, keepdim=True).mean()
-
         policy_loss = policy_action_loss
 
         self.policy.actor_optimizer.zero_grad()
@@ -172,6 +173,8 @@ class MAA2C():
             advantages = buffer.returns[:-1] - self.value_normalizer.denormalize(buffer.value_preds[:-1])
         else:
             advantages = buffer.returns[:-1] - buffer.value_preds[:-1]
+            
+        print(advantages[:5,:,0])
         advantages_copy = advantages.copy()
         advantages_copy[buffer.active_masks[:-1] == 0.0] = np.nan
         mean_advantages = np.nanmean(advantages_copy)

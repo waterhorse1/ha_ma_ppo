@@ -54,6 +54,7 @@ class MujocoRunner(Runner):
             # compute return and update network
             self.compute()
             train_infos = self.train()
+            
 
             # post process
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads
