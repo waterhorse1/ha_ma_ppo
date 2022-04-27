@@ -3,11 +3,11 @@ env="mujoco"
 scenario="HalfCheetah-v2"
 agent_conf="3x2"
 agent_obsk=1
-algo="haa2c"
+algo="hatrpo"
 #exp="mlp_ppo10_lr=1e-4_mb=1"
 exp="test"
 running_max=1
-kl_threshold=1e-4
+kl_threshold=5e-4
 echo "env is ${env}, scenario is ${scenario}, algo is ${algo}, exp is ${exp}, max seed is ${seed_max}"
 #for number in {1,42,7654,9876,12321}
 for number in {1,}

@@ -3,12 +3,13 @@ import torch
 import torch.nn as nn
 from utils.util import get_gard_norm, huber_loss, mse_loss
 from utils.popart import PopArt
+from utils.valuenorm import ValueNorm
 from algorithms.utils.util import check
 from algorithms.actor_critic import Actor
 
 class HATRPO():
     """
-    Trainer class for MATRPO to update policies.
+    Trainer class for HATRPO to update policies.
     :param args: (argparse.Namespace) arguments containing relevant model, policy, and env information.
     :param policy: (HATRPO_Policy) policy to update.
     :param device: (torch.device) specifies the device to run on (cpu/gpu).
@@ -23,6 +24,7 @@ class HATRPO():
         self.policy = policy
 
         self.clip_param = args.clip_param
+        self.value_clip_param = args.value_clip_param
         self.num_mini_batch = args.num_mini_batch
         self.data_chunk_length = args.data_chunk_length
         self.value_loss_coef = args.value_loss_coef
@@ -40,11 +42,14 @@ class HATRPO():
         self._use_clipped_value_loss = args.use_clipped_value_loss
         self._use_huber_loss = args.use_huber_loss
         self._use_popart = args.use_popart
+        self._use_valuenorm = args.use_valuenorm
         self._use_value_active_masks = args.use_value_active_masks
         self._use_policy_active_masks = args.use_policy_active_masks
         
         if self._use_popart:
             self.value_normalizer = PopArt(1, device=self.device)
+        elif self._use_valuenorm:
+            self.value_normalizer = ValueNorm(1, device = self.device)
         else:
             self.value_normalizer = None
 
@@ -58,14 +63,13 @@ class HATRPO():
 
         :return value_loss: (torch.Tensor) value function loss.
         """
-        if self._use_popart:
-            value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
-                                                                                        self.clip_param)
-            error_clipped = self.value_normalizer(return_batch) - value_pred_clipped
-            error_original = self.value_normalizer(return_batch) - values
+        value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.value_clip_param,
+                                                                                        self.value_clip_param)
+        if self._use_popart or self._use_valuenorm:
+            self.value_normalizer.update(return_batch)
+            error_clipped = self.value_normalizer.normalize(return_batch) - value_pred_clipped
+            error_original = self.value_normalizer.normalize(return_batch) - values
         else:
-            value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
-                                                                                        self.clip_param)
             error_clipped = return_batch - value_pred_clipped
             error_original = return_batch - values
 
@@ -226,12 +230,13 @@ class HATRPO():
         self.policy.critic_optimizer.step()
 
         # actor update
-        ratio = torch.exp(action_log_probs - old_action_log_probs_batch)
+        ratio = torch.exp((action_log_probs - old_action_log_probs_batch).sum(dim=-1, keepdim=True))
+        surr1 = ratio * adv_targ
         if self._use_policy_active_masks:
-            loss = (torch.sum(ratio * factor_batch * adv_targ, dim=-1, keepdim=True) *
+            loss = (torch.sum(surr1 dim=-1, keepdim=True) *
                            active_masks_batch).sum() / active_masks_batch.sum()
         else:
-            loss = torch.sum(ratio * factor_batch * adv_targ, dim=-1, keepdim=True).mean()
+            loss = torch.sum(surr1, dim=-1, keepdim=True).mean()
 
         loss_grad = torch.autograd.grad(loss, self.policy.actor.parameters(), allow_unused=True)
         loss_grad = self.flat_grad(loss_grad)
@@ -336,7 +341,6 @@ class HATRPO():
         std_advantages = np.nanstd(advantages_copy)
         advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
         
-
         train_info = {}
 
         train_info['value_loss'] = 0
@@ -346,7 +350,6 @@ class HATRPO():
         train_info['expected_improve'] = 0
         train_info['critic_grad_norm'] = 0
         train_info['ratio'] = 0
-
 
         if self._use_recurrent_policy:
             data_generator = buffer.recurrent_generator(advantages, self.num_mini_batch, self.data_chunk_length)

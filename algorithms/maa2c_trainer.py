@@ -22,7 +22,7 @@ class MAA2C():
         self.tpdv = dict(dtype=torch.float32, device=device)
         self.policy = policy
 
-        self.clip_param = args.clip_param
+        self.value_clip_param = args.value_clip_param
         self.ppo_epoch = args.ppo_epoch
         self.num_mini_batch = args.num_mini_batch
         self.data_chunk_length = args.data_chunk_length
@@ -59,8 +59,8 @@ class MAA2C():
         :param active_masks_batch: (torch.Tensor) denotes if agent is active or dead at a given timesep.
         :return value_loss: (torch.Tensor) value function loss.
         """
-        value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
-                                                                                        self.clip_param)
+        value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.value_clip_param,
+                                                                                        self.value_clip_param)
         if self._use_popart or self._use_valuenorm:
             self.value_normalizer.update(return_batch)
             error_clipped = self.value_normalizer.normalize(return_batch) - value_pred_clipped
@@ -174,7 +174,6 @@ class MAA2C():
         else:
             advantages = buffer.returns[:-1] - buffer.value_preds[:-1]
             
-        print(advantages[:5,:,0])
         advantages_copy = advantages.copy()
         advantages_copy[buffer.active_masks[:-1] == 0.0] = np.nan
         mean_advantages = np.nanmean(advantages_copy)

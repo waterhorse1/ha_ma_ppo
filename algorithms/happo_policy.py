@@ -44,7 +44,7 @@ class HAPPO_Policy:
                                                  weight_decay=self.weight_decay)
         
     def copy_critic(self, critic):
-        self.critic = critic
+        self.critic = copy.deepcopy(critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(),
                                                  lr=self.critic_lr,
                                                  eps=self.opti_eps,

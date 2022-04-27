@@ -8,7 +8,7 @@ from algorithms.utils.util import check
 
 class HAA2C():
     """
-    Trainer class for HAPPO to update policies.
+    Trainer class for HAA2C to update policies.
     :param args: (argparse.Namespace) arguments containing relevant model, policy, and env information.
     :param policy: (HAPPO_Policy) policy to update.
     :param device: (torch.device) specifies the device to run on (cpu/gpu).
@@ -22,7 +22,6 @@ class HAA2C():
         self.tpdv = dict(dtype=torch.float32, device=device)
         self.policy = policy
 
-        self.clip_param = args.clip_param
         self.value_clip_param = args.value_clip_param
         self.ppo_epoch = args.ppo_epoch
         self.num_mini_batch = args.num_mini_batch
@@ -61,8 +60,8 @@ class HAA2C():
 
         :return value_loss: (torch.Tensor) value function loss.
         """
-        value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
-                                                                                        self.clip_param)
+        value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.value_clip_param,
+                                                                                        self.value_clip_param)
         if self._use_popart or self._use_valuenorm:
             self.value_normalizer.update(return_batch)
             error_clipped = self.value_normalizer.normalize(return_batch) - value_pred_clipped
@@ -180,7 +179,6 @@ class HAA2C():
         else:
             advantages = buffer.returns[:-1] - buffer.value_preds[:-1]
         
-        print(advantages.shape, buffer.factor.shape, advantages[:10,:,0], buffer.factor[:10,0,0])
         if buffer.factor is None:
             pass
         else:
@@ -192,7 +190,6 @@ class HAA2C():
         std_advantages = np.nanstd(advantages_copy)
         advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
         
-
         train_info = {}
 
         train_info['value_loss'] = 0

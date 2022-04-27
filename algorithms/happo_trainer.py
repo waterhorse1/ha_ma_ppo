@@ -61,8 +61,8 @@ class HAPPO():
 
         :return value_loss: (torch.Tensor) value function loss.
         """
-        value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
-                                                                                        self.clip_param)
+        value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.value_clip_param,
+                                                                                        self.value_clip_param)
         if self._use_popart or self._use_valuenorm:
             self.value_normalizer.update(return_batch)
             error_clipped = self.value_normalizer.normalize(return_batch) - value_pred_clipped
@@ -130,17 +130,17 @@ class HAPPO():
                                                                               available_actions_batch,
                                                                               active_masks_batch)
         # actor update
-        imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch)
+        imp_weights = torch.exp((action_log_probs - old_action_log_probs_batch).sum(dim=-1, keepdim=True))
 
         surr1 = imp_weights * adv_targ
         surr2 = torch.clamp(imp_weights, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
 
         if self._use_policy_active_masks:
-            policy_action_loss = (-torch.sum(factor_batch * torch.min(surr1, surr2),
+            policy_action_loss = (-torch.sum(torch.min(surr1, surr2),
                                              dim=-1,
                                              keepdim=True) * active_masks_batch).sum() / active_masks_batch.sum()
         else:
-            policy_action_loss = -torch.sum(factor_batch * torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
+            policy_action_loss = -torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
 
         policy_loss = policy_action_loss
 
@@ -183,6 +183,11 @@ class HAPPO():
             advantages = buffer.returns[:-1] - self.value_normalizer.denormalize(buffer.value_preds[:-1])
         else:
             advantages = buffer.returns[:-1] - buffer.value_preds[:-1]
+        
+        if buffer.factor is None:
+            pass
+        else:
+            advantages = advantages * buffer.factor
 
         advantages_copy = advantages.copy()
         advantages_copy[buffer.active_masks[:-1] == 0.0] = np.nan
