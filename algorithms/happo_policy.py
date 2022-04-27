@@ -43,12 +43,10 @@ class HAPPO_Policy:
                                                  eps=self.opti_eps,
                                                  weight_decay=self.weight_decay)
         
-    def copy_critic(self, critic):
-        self.critic = copy.deepcopy(critic)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(),
-                                                 lr=self.critic_lr,
-                                                 eps=self.opti_eps,
-                                                 weight_decay=self.weight_decay)
+    def share_critic(self, critic):
+        self.critic = critic
+        self.critic_optimizer = None
+        
     def lr_decay(self, episode, episodes):
         """
         Decay the actor and critic learning rates.

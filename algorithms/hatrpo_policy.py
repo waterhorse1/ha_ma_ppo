@@ -42,6 +42,10 @@ class HATRPO_Policy:
                                                  lr=self.critic_lr,
                                                  eps=self.opti_eps,
                                                  weight_decay=self.weight_decay)
+        
+    def share_critic(self, critic):
+        self.critic = critic
+        self.critic_optimizer = None
 
     def lr_decay(self, episode, episodes):
         """

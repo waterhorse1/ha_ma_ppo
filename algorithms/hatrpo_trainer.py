@@ -52,6 +52,10 @@ class HATRPO():
             self.value_normalizer = ValueNorm(1, device = self.device)
         else:
             self.value_normalizer = None
+            
+    def share_critic(self, critic, value_normalizer):
+        self.policy.share_critic(critic)
+        self.value_normalizer = value_normalizer
 
     def cal_value_loss(self, values, value_preds_batch, return_batch, active_masks_batch):
         """
@@ -182,7 +186,7 @@ class HATRPO():
         kl_hessian_p = self.flat_hessian(kl_hessian_p)
         return kl_hessian_p + 0.1 * p
 
-    def trpo_update(self, sample, update_actor=True):
+    def trpo_update(self, sample, update_actor=True, update_critic=True):
         """
         Update actor and critic networks.
         :param sample: (Tuple) contains data batch with which to update networks.
@@ -214,26 +218,31 @@ class HATRPO():
                                                                               masks_batch, 
                                                                               available_actions_batch,
                                                                               active_masks_batch)
+        
+        value_loss = torch.tensor(0)
+        critic_grad_norm = 0
+        
+        if update_critic:
 
-        # critic update
-        value_loss = self.cal_value_loss(values, value_preds_batch, return_batch, active_masks_batch)
+            # critic update
+            value_loss = self.cal_value_loss(values, value_preds_batch, return_batch, active_masks_batch)
 
-        self.policy.critic_optimizer.zero_grad()
+            self.policy.critic_optimizer.zero_grad()
 
-        (value_loss * self.value_loss_coef).backward()
+            (value_loss * self.value_loss_coef).backward()
 
-        if self._use_max_grad_norm:
-            critic_grad_norm = nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
-        else:
-            critic_grad_norm = get_gard_norm(self.policy.critic.parameters())
+            if self._use_max_grad_norm:
+                critic_grad_norm = nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
+            else:
+                critic_grad_norm = get_gard_norm(self.policy.critic.parameters())
 
-        self.policy.critic_optimizer.step()
+            self.policy.critic_optimizer.step()
 
         # actor update
         ratio = torch.exp((action_log_probs - old_action_log_probs_batch).sum(dim=-1, keepdim=True))
         surr1 = ratio * adv_targ
         if self._use_policy_active_masks:
-            loss = (torch.sum(surr1 dim=-1, keepdim=True) *
+            loss = (torch.sum(surr1, dim=-1, keepdim=True) *
                            active_masks_batch).sum() / active_masks_batch.sum()
         else:
             loss = torch.sum(surr1, dim=-1, keepdim=True).mean()
@@ -323,7 +332,7 @@ class HATRPO():
 
         return value_loss, critic_grad_norm, kl, loss_improve, expected_improve, dist_entropy, ratio
 
-    def train(self, buffer, update_actor=True):
+    def train(self, buffer, update_actor=True, update_critic=True):
         """
         Perform a training update using minibatch GD.
         :param buffer: (SharedReplayBuffer) buffer containing training data.
@@ -335,6 +344,12 @@ class HATRPO():
             advantages = buffer.returns[:-1] - self.value_normalizer.denormalize(buffer.value_preds[:-1])
         else:
             advantages = buffer.returns[:-1] - buffer.value_preds[:-1]
+            
+        if buffer.factor is None:
+            pass
+        else:
+            advantages = advantages * buffer.factor
+            
         advantages_copy = advantages.copy()
         advantages_copy[buffer.active_masks[:-1] == 0.0] = np.nan
         mean_advantages = np.nanmean(advantages_copy)
@@ -361,7 +376,7 @@ class HATRPO():
         for sample in data_generator:
 
             value_loss, critic_grad_norm, kl, loss_improve, expected_improve, dist_entropy, imp_weights \
-                = self.trpo_update(sample, update_actor)
+                = self.trpo_update(sample, update_actor, update_critic)
 
             train_info['value_loss'] += value_loss.item()
             train_info['kl'] += kl

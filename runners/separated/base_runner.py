@@ -92,8 +92,6 @@ class Runner(object):
                         share_observation_space,
                         self.envs.action_space[agent_id],
                         device = self.device)
-            if self.all_args.same_critic and agent_id > 0:
-                po.copy_critic(self.policy[0].critic)
             self.policy.append(po)
 
         if self.model_dir is not None:
@@ -110,6 +108,9 @@ class Runner(object):
                                        self.envs.observation_space[agent_id],
                                        share_observation_space,
                                        self.envs.action_space[agent_id])
+            if self.all_args.same_critic and agent_id > 0:
+                # duplicate critic and value_normalizer using reference
+                tr.share_critic(self.trainer[0].policy.critic, self.trainer[0].value_normalizer)
             self.buffer.append(bu)
             self.trainer.append(tr)
             
@@ -140,8 +141,13 @@ class Runner(object):
         # random update order
         action_dim=self.buffer[0].actions.shape[-1]
         factor = np.ones((self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
-        
+            
         for agent_id in torch.randperm(self.num_agents):
+            print(agent_id)
+            if self.all_args.same_critic:
+                update_critic = True if agent_id == 0 else False
+            else:
+                update_critic = True
             self.trainer[agent_id].prep_training()
             
             if self.all_args.algorithm_name in ["hatrpo", "happo", "haa2c"]:
@@ -166,7 +172,7 @@ class Runner(object):
                 else:
                     raise NotImplementedError
 
-                train_info = self.trainer[agent_id].train(self.buffer[agent_id])
+                train_info = self.trainer[agent_id].train(self.buffer[agent_id], update_critic=update_critic)
 
 
                 if self.all_args.algorithm_name == "hatrpo":
@@ -186,11 +192,11 @@ class Runner(object):
 
                 else:
                     raise NotImplementedError   
-                log_action_ratio = (new_actions_logprob-old_actions_logprob).sum(dim=-1, keepdim=True)
+                log_action_ratio = (new_actions_logprob - old_actions_logprob).sum(dim=-1, keepdim=True)
                 factor = factor * _t2n(torch.exp(log_action_ratio).reshape(self.episode_length,self.n_rollout_threads,1))
 
             elif self.all_args.algorithm_name == "maa2c" or self.all_args.algorithm_name == "mappo":
-                train_info = self.trainer[agent_id].train(self.buffer[agent_id])
+                train_info = self.trainer[agent_id].train(self.buffer[agent_id], update_critic=update_critic)
             else:
                 raise NotImplementedError
             train_infos.append(train_info)      

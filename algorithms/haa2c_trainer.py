@@ -5,6 +5,7 @@ from utils.util import get_gard_norm, huber_loss, mse_loss
 from utils.popart import PopArt
 from utils.valuenorm import ValueNorm
 from algorithms.utils.util import check
+import copy
 
 class HAA2C():
     """
@@ -49,6 +50,10 @@ class HAA2C():
             self.value_normalizer = ValueNorm(1, device = self.device)
         else:
             self.value_normalizer = None
+            
+    def share_critic(self, critic, value_normalizer):
+        self.policy.share_critic(critic)
+        self.value_normalizer = value_normalizer
 
     def cal_value_loss(self, values, value_preds_batch, return_batch, active_masks_batch):
         """
@@ -89,7 +94,7 @@ class HAA2C():
 
         return value_loss
 
-    def ppo_update(self, sample, update_actor=True):
+    def ppo_update(self, sample, update_actor=True, update_critic=True):
         """
         Update actor and critic networks.
         :param sample: (Tuple) contains data batch with which to update networks.
@@ -138,35 +143,39 @@ class HAA2C():
         else:
             policy_action_loss = -torch.sum(surr1, dim=-1, keepdim=True).mean()
         policy_loss = policy_action_loss
-
-        self.policy.actor_optimizer.zero_grad()
-
+        actor_grad_norm = 0
+        
         if update_actor:
+            self.policy.actor_optimizer.zero_grad()
+            
             (policy_loss - dist_entropy * self.entropy_coef).backward()
 
-        if self._use_max_grad_norm:
-            actor_grad_norm = nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.max_grad_norm)
-        else:
-            actor_grad_norm = get_gard_norm(self.policy.actor.parameters())
+            if self._use_max_grad_norm:
+                actor_grad_norm = nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.max_grad_norm)
+            else:
+                actor_grad_norm = get_gard_norm(self.policy.actor.parameters())
 
-        self.policy.actor_optimizer.step()
+            self.policy.actor_optimizer.step()
+        
+        value_loss = torch.tensor(0)
+        critic_grad_norm = 0
+        if update_critic:
+            value_loss = self.cal_value_loss(values, value_preds_batch, return_batch, active_masks_batch)
+            
+            self.policy.critic_optimizer.zero_grad()
+            
+            (value_loss * self.value_loss_coef).backward()
 
-        value_loss = self.cal_value_loss(values, value_preds_batch, return_batch, active_masks_batch)
+            if self._use_max_grad_norm:
+                critic_grad_norm = nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
+            else:
+                critic_grad_norm = get_gard_norm(self.policy.critic.parameters())
 
-        self.policy.critic_optimizer.zero_grad()
-
-        (value_loss * self.value_loss_coef).backward()
-
-        if self._use_max_grad_norm:
-            critic_grad_norm = nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
-        else:
-            critic_grad_norm = get_gard_norm(self.policy.critic.parameters())
-
-        self.policy.critic_optimizer.step()
+            self.policy.critic_optimizer.step()
 
         return value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights
 
-    def train(self, buffer, update_actor=True):
+    def train(self, buffer, update_actor=True, update_critic=True):
         """
         Perform a training update using minibatch GD.
         :param buffer: (SharedReplayBuffer) buffer containing training data.
@@ -179,11 +188,14 @@ class HAA2C():
         else:
             advantages = buffer.returns[:-1] - buffer.value_preds[:-1]
         
+        #print(1, advantages[:5, :4, 0])
         if buffer.factor is None:
             pass
         else:
             advantages = advantages * buffer.factor
-
+        #print(2, buffer.factor[:5, :4, 0])
+        
+        # renormalization after conducting importance ratio
         advantages_copy = advantages.copy()
         advantages_copy[buffer.active_masks[:-1] == 0.0] = np.nan
         mean_advantages = np.nanmean(advantages_copy)
@@ -208,7 +220,7 @@ class HAA2C():
                 data_generator = buffer.feed_forward_generator(advantages, self.num_mini_batch)
 
             for sample in data_generator:
-                value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights = self.ppo_update(sample, update_actor=update_actor)
+                value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights = self.ppo_update(sample, update_actor=update_actor, update_critic=update_critic)
 
                 train_info['value_loss'] += value_loss.item()
                 train_info['policy_loss'] += policy_loss.item()

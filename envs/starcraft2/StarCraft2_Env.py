@@ -280,7 +280,27 @@ class StarCraft2Env(MultiAgentEnv):
         self.max_reward = (
             self.n_enemies * self.reward_death_value + self.reward_win
         )
+        
+        self.ally_state_attr_names = [
+            "health",
+            "energy/cooldown",
+            "rel_x",
+            "rel_y",
+        ]
+        self.enemy_state_attr_names = ["health", "rel_x", "rel_y"]
 
+        if self.shield_bits_ally > 0:
+            self.ally_state_attr_names += ["shield"]
+        if self.shield_bits_enemy > 0:
+            self.enemy_state_attr_names += ["shield"]
+
+        if self.unit_type_bits > 0:
+            bit_attr_names = [
+                "type_{}".format(bit) for bit in range(self.unit_type_bits)
+            ]
+            self.ally_state_attr_names += bit_attr_names
+            self.enemy_state_attr_names += bit_attr_names
+            
         self.agents = {}
         self.enemies = {}
         self._episode_count = 0
@@ -600,7 +620,7 @@ class StarCraft2Env(MultiAgentEnv):
             global_state = [self.get_state_agent(agent_id) for agent_id in range(self.n_agents)]
         else:
             global_state = [self.get_state(agent_id) for agent_id in range(self.n_agents)]
-
+        
         local_obs = self.get_obs()
 
         if self.use_stacked_frames:
@@ -1149,7 +1169,131 @@ class StarCraft2Env(MultiAgentEnv):
         """
         agents_obs = [self.get_obs_agent(i) for i in range(self.n_agents)]
         return agents_obs
+    
+    def get_state(self, agent_id=-1):
+        """Returns the global state.
+        NOTE: This functon should not be used during decentralised execution.
+        """
+        if self.obs_instead_of_state:
+            obs_concat = np.concatenate(self.get_obs(), axis=0).astype(
+                np.float32
+            )
+            return obs_concat
 
+        state_dict = self.get_state_dict()
+
+        state = np.append(
+            state_dict["allies"].flatten(), state_dict["enemies"].flatten()
+        )
+        if "last_action" in state_dict:
+            state = np.append(state, state_dict["last_action"].flatten())
+        if "timestep" in state_dict:
+            state = np.append(state, state_dict["timestep"])
+
+        state = state.astype(dtype=np.float32)
+
+        if self.debug:
+            logging.debug("STATE".center(60, "-"))
+            logging.debug("Ally state {}".format(state_dict["allies"]))
+            logging.debug("Enemy state {}".format(state_dict["enemies"]))
+            if self.state_last_action:
+                logging.debug("Last actions {}".format(self.last_action))
+
+        return state
+    
+    def get_ally_num_attributes(self):
+        return len(self.ally_state_attr_names)
+
+    def get_enemy_num_attributes(self):
+        return len(self.enemy_state_attr_names)
+    
+    def get_state_dict(self):
+        """Returns the global state as a dictionary.
+        - allies: numpy array containing agents and their attributes
+        - enemies: numpy array containing enemies and their attributes
+        - last_action: numpy array of previous actions for each agent
+        - timestep: current no. of steps divided by total no. of steps
+        NOTE: This function should not be used during decentralised execution.
+        """
+
+        # number of features equals the number of attribute names
+        nf_al = self.get_ally_num_attributes()
+        nf_en = self.get_enemy_num_attributes()
+
+        ally_state = np.zeros((self.n_agents, nf_al))
+        enemy_state = np.zeros((self.n_enemies, nf_en))
+
+        center_x = self.map_x / 2
+        center_y = self.map_y / 2
+
+        for al_id, al_unit in self.agents.items():
+            if al_unit.health > 0:
+                x = al_unit.pos.x
+                y = al_unit.pos.y
+                max_cd = self.unit_max_cooldown(al_unit)
+
+                ally_state[al_id, 0] = (
+                    al_unit.health / al_unit.health_max
+                )  # health
+                if (
+                    self.map_type == "MMM"
+                    and al_unit.unit_type == self.medivac_id
+                ):
+                    ally_state[al_id, 1] = al_unit.energy / max_cd  # energy
+                else:
+                    ally_state[al_id, 1] = (
+                        al_unit.weapon_cooldown / max_cd
+                    )  # cooldown
+                ally_state[al_id, 2] = (
+                    x - center_x
+                ) / self.max_distance_x  # relative X
+                ally_state[al_id, 3] = (
+                    y - center_y
+                ) / self.max_distance_y  # relative Y
+
+                if self.shield_bits_ally > 0:
+                    max_shield = self.unit_max_shield(al_unit)
+                    ally_state[al_id, 4] = (
+                        al_unit.shield / max_shield
+                    )  # shield
+
+                if self.unit_type_bits > 0:
+                    type_id = self.get_unit_type_id(al_unit, True)
+                    ally_state[al_id, type_id - self.unit_type_bits] = 1
+
+        for e_id, e_unit in self.enemies.items():
+            if e_unit.health > 0:
+                x = e_unit.pos.x
+                y = e_unit.pos.y
+
+                enemy_state[e_id, 0] = (
+                    e_unit.health / e_unit.health_max
+                )  # health
+                enemy_state[e_id, 1] = (
+                    x - center_x
+                ) / self.max_distance_x  # relative X
+                enemy_state[e_id, 2] = (
+                    y - center_y
+                ) / self.max_distance_y  # relative Y
+
+                if self.shield_bits_enemy > 0:
+                    max_shield = self.unit_max_shield(e_unit)
+                    enemy_state[e_id, 3] = e_unit.shield / max_shield  # shield
+
+                if self.unit_type_bits > 0:
+                    type_id = self.get_unit_type_id(e_unit, False)
+                    enemy_state[e_id, type_id - self.unit_type_bits] = 1
+
+        state = {"allies": ally_state, "enemies": enemy_state}
+
+        if self.state_last_action:
+            state["last_action"] = self.last_action
+        if self.state_timestep_number:
+            state["timestep"] = self._episode_steps / self.episode_limit
+
+        return state
+
+    '''
     def get_state(self, agent_id=-1):
         """Returns the global state.
         NOTE: This functon should not be used during decentralised execution.
@@ -1324,7 +1468,7 @@ class StarCraft2Env(MultiAgentEnv):
                 logging.debug("Last actions {}".format(self.last_action))
 
         return state
-    
+    '''
     def get_state_agent(self, agent_id):
         """Returns observation for agent_id. The observation is composed of:
 
@@ -1648,7 +1792,7 @@ class StarCraft2Env(MultiAgentEnv):
             all_feats += timestep_feats
 
         return [all_feats * self.stacked_frames if self.use_stacked_frames else all_feats, [n_allies, n_ally_feats], [n_enemies, n_enemy_feats], [1, move_feats], [1, own_feats+agent_id_feats+timestep_feats]]
-
+    '''
     def get_state_size(self):
         """Returns the size of the global state."""
         if self.obs_instead_of_state:
@@ -1734,6 +1878,26 @@ class StarCraft2Env(MultiAgentEnv):
             size += agent_id_feats
 
         return [size * self.stacked_frames if self.use_stacked_frames else size, [self.n_agents, nf_al], [self.n_enemies, nf_en], [1, move_state + obs_agent_size + timestep_state + agent_id_feats]]
+    '''
+    def get_state_size(self):
+        """Returns the size of the global state."""
+        if self.obs_instead_of_state:
+            return self.get_obs_size() * self.n_agents
+
+        nf_al = 4 + self.shield_bits_ally + self.unit_type_bits
+        nf_en = 3 + self.shield_bits_enemy + self.unit_type_bits
+
+        enemy_state = self.n_enemies * nf_en
+        ally_state = self.n_agents * nf_al
+
+        size = enemy_state + ally_state
+
+        if self.state_last_action:
+            size += self.n_agents * self.n_actions
+        if self.state_timestep_number:
+            size += 1
+
+        return [size * self.stacked_frames]
     
     def get_visibility_matrix(self):
         """Returns a boolean numpy array of dimensions 

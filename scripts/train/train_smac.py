@@ -63,6 +63,7 @@ def parse_args(args, parser):
     parser.add_argument("--use_state_agent", action='store_true', default=False)
     parser.add_argument("--use_mustalive", action='store_false', default=True)
     parser.add_argument("--add_center_xy", action='store_true', default=False)
+    #parser.add_argument("--state_agent_id", action='store_true', default=True)
     parser.add_argument("--use_single_network", action='store_true', default=False)
     all_args = parser.parse_known_args(args)[0]
 
@@ -109,7 +110,14 @@ def main(args):
     run_dir = run_dir / curr_run
     if not run_dir.exists():
         os.makedirs(str(run_dir))
-
+    
+    # save config under run_dir
+    args_dict = all_args.__dict__
+    config_dir = run_dir / 'config.json'
+    import json
+    with open(config_dir, 'w') as f:
+        json.dump(args_dict, f)
+    
     setproctitle.setproctitle(
         str(all_args.algorithm_name) + "-" + str(all_args.env_name) + "-" + str(all_args.experiment_name) + "@" + str(
             all_args.user_name))
