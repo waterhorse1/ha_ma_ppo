@@ -143,6 +143,7 @@ class Runner(object):
         factor = np.ones((self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
             
         for agent_id in torch.randperm(self.num_agents):
+            print(agent_id)
             if self.all_args.same_critic:
                 update_critic = True if agent_id == 0 else False
             else:
@@ -200,6 +201,12 @@ class Runner(object):
                 raise NotImplementedError
             train_infos.append(train_info)      
             self.buffer[agent_id].after_update()
+        
+        for agent_id in range(self.num_agents):
+            # algorithm
+            if self.all_args.same_critic and agent_id > 0:
+                # duplicate critic and value_normalizer using reference
+                self.trainer[agent_id].share_critic(self.trainer[0].policy.critic, self.trainer[0].value_normalizer)
         return train_infos
 
     def save(self):
