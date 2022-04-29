@@ -143,7 +143,7 @@ class Runner(object):
         factor = np.ones((self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
             
         for agent_id in torch.randperm(self.num_agents):
-            print(agent_id)
+            #print(agent_id)
             if self.all_args.same_critic:
                 update_critic = True if agent_id == 0 else False
             else:
